@@ -1,0 +1,805 @@
+"use strict";
+
+(() => {
+  const HOST_ID = "chrome-immersive-bookmarks-root";
+  const SHOW_DELAY_MS = 150;
+  const HIDE_DELAY_MS = 80;
+  const MENU_HIDE_DELAY_MS = 180;
+  const OVERFLOW_NODE_ID = "__overflow-bookmarks__";
+  const PAGE_ACTIVE_ATTRIBUTE = "data-chrome-immersive-fullscreen-active";
+
+  if (document.getElementById(HOST_ID)) {
+    return;
+  }
+
+  const host = document.createElement("div");
+  host.id = HOST_ID;
+  host.dataset.active = "false";
+  host.dataset.open = "false";
+
+  const shadow = host.attachShadow({ mode: "closed" });
+  const stylesheet = document.createElement("link");
+  stylesheet.rel = "stylesheet";
+  stylesheet.href = chrome.runtime.getURL("content.css");
+
+  const trigger = document.createElement("div");
+  trigger.id = "trigger";
+  trigger.setAttribute("aria-hidden", "true");
+
+  const surface = document.createElement("div");
+  surface.id = "surface";
+  surface.setAttribute("role", "toolbar");
+  surface.setAttribute("aria-label", "Fullscreen browser controls");
+
+  const tabStrip = document.createElement("div");
+  tabStrip.id = "tab-strip";
+
+  const tabsScroller = document.createElement("div");
+  tabsScroller.id = "tabs-scroller";
+
+  const tabItems = document.createElement("div");
+  tabItems.id = "tab-items";
+  tabsScroller.append(tabItems);
+
+  const newTabButton = document.createElement("button");
+  newTabButton.type = "button";
+  newTabButton.id = "new-tab-button";
+  newTabButton.className = "chrome-button";
+  newTabButton.title = "New tab";
+  newTabButton.setAttribute("aria-label", "New tab");
+  newTabButton.textContent = "+";
+
+  const windowControls = document.createElement("div");
+  windowControls.id = "window-controls";
+
+  function createWindowButton(id, title, symbol) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = id;
+    button.className = "window-button";
+    button.title = title;
+    button.setAttribute("aria-label", title);
+    button.textContent = symbol;
+    return button;
+  }
+
+  const minimizeButton = createWindowButton(
+    "minimize-button",
+    "Minimize",
+    "—",
+  );
+  const restoreButton = createWindowButton(
+    "restore-button",
+    "Restore previous window size",
+    "▢",
+  );
+  const closeWindowButton = createWindowButton(
+    "close-window-button",
+    "Close window",
+    "×",
+  );
+  windowControls.append(minimizeButton, restoreButton, closeWindowButton);
+  tabStrip.append(tabsScroller, newTabButton, windowControls);
+
+  const navigation = document.createElement("div");
+  navigation.id = "navigation";
+
+  function createNavigationButton(id, title, symbol) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = id;
+    button.className = "chrome-button navigation-button";
+    button.title = title;
+    button.setAttribute("aria-label", title);
+    button.textContent = symbol;
+    return button;
+  }
+
+  const backButton = createNavigationButton("back-button", "Back", "←");
+  const forwardButton = createNavigationButton("forward-button", "Forward", "→");
+  const reloadButton = createNavigationButton("reload-button", "Reload", "↻");
+
+  const addressForm = document.createElement("form");
+  addressForm.id = "address-form";
+  const addressInput = document.createElement("input");
+  addressInput.id = "address-input";
+  addressInput.type = "text";
+  addressInput.autocomplete = "off";
+  addressInput.autocapitalize = "off";
+  addressInput.spellcheck = false;
+  addressInput.setAttribute("aria-label", "Address or search");
+  addressInput.placeholder = "Search the web or enter a URL";
+  addressForm.append(addressInput);
+  navigation.append(backButton, forwardButton, reloadButton, addressForm);
+
+  const toolbar = document.createElement("div");
+  toolbar.id = "toolbar";
+  toolbar.setAttribute("aria-label", "Bookmarks bar");
+
+  const scroller = document.createElement("div");
+  scroller.id = "scroller";
+
+  const items = document.createElement("div");
+  items.id = "items";
+  scroller.append(items);
+
+  const status = document.createElement("div");
+  status.id = "status";
+  status.hidden = true;
+
+  const overflowButton = document.createElement("button");
+  overflowButton.type = "button";
+  overflowButton.id = "overflow-button";
+  overflowButton.className = "bar-item";
+  overflowButton.hidden = true;
+  overflowButton.title = "More bookmarks";
+  overflowButton.setAttribute("aria-label", "More bookmarks");
+  overflowButton.setAttribute("aria-haspopup", "menu");
+  overflowButton.setAttribute("aria-expanded", "false");
+  overflowButton.textContent = "»";
+
+  toolbar.append(scroller, overflowButton, status);
+  surface.append(tabStrip, navigation, toolbar);
+
+  const menuLayer = document.createElement("div");
+  menuLayer.id = "menu-layer";
+
+  const liveRegion = document.createElement("div");
+  liveRegion.id = "live-region";
+  liveRegion.setAttribute("role", "status");
+  liveRegion.setAttribute("aria-live", "polite");
+
+  shadow.append(stylesheet, trigger, surface, menuLayer, liveRegion);
+  document.documentElement.append(host);
+
+  let showTimer = 0;
+  let hideTimer = 0;
+  let menuHideTimer = 0;
+  let fullscreenCheckTimer = 0;
+  let requestNumber = 0;
+  let pointerInUi = false;
+  let lastPointerY = Number.POSITIVE_INFINITY;
+  let lastTopEdgeStateCheck = 0;
+  let menuPanels = [];
+  let barEntries = [];
+  let overflowBookmarks = [];
+  let overflowUpdateFrame = 0;
+
+  function sendMessage(message) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(message, (response) => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new Error(error.message));
+          return;
+        }
+        resolve(response);
+      });
+    });
+  }
+
+  function clearTimer(timerId) {
+    if (timerId) {
+      window.clearTimeout(timerId);
+    }
+  }
+
+  function setActive(active) {
+    host.dataset.active = active ? "true" : "false";
+    document.documentElement.toggleAttribute(PAGE_ACTIVE_ATTRIBUTE, active);
+    if (!active) {
+      closeBar(true);
+    }
+  }
+
+  async function syncFullscreenState() {
+    try {
+      const result = await sendMessage({ type: "GET_FULLSCREEN_STATE" });
+      const active = result?.enabled === true && document.fullscreenElement === null;
+      setActive(active);
+      if (active && lastPointerY <= 3) {
+        pointerInUi = true;
+        scheduleOpen();
+      }
+    } catch {
+      setActive(false);
+    }
+  }
+
+  function scheduleFullscreenCheck() {
+    clearTimer(fullscreenCheckTimer);
+    fullscreenCheckTimer = window.setTimeout(syncFullscreenState, 100);
+  }
+
+  function scheduleOpen() {
+    clearTimer(hideTimer);
+    clearTimer(showTimer);
+    showTimer = window.setTimeout(openBar, SHOW_DELAY_MS);
+  }
+
+  function isPointerOverUi() {
+    return surface.matches(":hover") ||
+      trigger.matches(":hover") ||
+      menuPanels.some(({ panel }) => panel.matches(":hover"));
+  }
+
+  function scheduleClose() {
+    clearTimer(showTimer);
+    clearTimer(hideTimer);
+    hideTimer = window.setTimeout(() => {
+      if (isPointerOverUi()) {
+        pointerInUi = true;
+        return;
+      }
+
+      pointerInUi = false;
+      closeBar();
+    }, HIDE_DELAY_MS);
+  }
+
+  async function openBar() {
+    if (!pointerInUi || host.dataset.active !== "true") {
+      return;
+    }
+
+    const currentRequest = ++requestNumber;
+    try {
+      const result = await sendMessage({ type: "GET_IMMERSIVE_DATA" });
+      if (currentRequest !== requestNumber || !pointerInUi) {
+        return;
+      }
+
+      if (!result?.enabled) {
+        setActive(false);
+        return;
+      }
+
+      renderTabs(result.tabs ?? []);
+      renderBookmarks(result.bookmarks ?? []);
+      host.dataset.open = "true";
+    } catch (error) {
+      showStatus(error instanceof Error ? error.message : "Bookmarks could not be loaded.");
+      host.dataset.open = "true";
+    }
+  }
+
+  function closeBar(immediate = false) {
+    requestNumber += 1;
+    clearTimer(showTimer);
+    clearTimer(hideTimer);
+    clearTimer(menuHideTimer);
+    closeMenusFrom(0);
+
+    if (immediate) {
+      host.dataset.open = "false";
+      return;
+    }
+
+    host.dataset.open = "false";
+  }
+
+  function showStatus(message) {
+    status.textContent = message;
+    status.hidden = false;
+    liveRegion.textContent = message;
+  }
+
+  function clearStatus() {
+    status.textContent = "";
+    status.hidden = true;
+  }
+
+  function displayTitle(node) {
+    if (node.title?.trim()) {
+      return node.title.trim();
+    }
+
+    if (node.url) {
+      try {
+        return new URL(node.url).hostname || node.url;
+      } catch {
+        return node.url;
+      }
+    }
+
+    return "Untitled folder";
+  }
+
+  function faviconUrl(pageUrl) {
+    const url = new URL(chrome.runtime.getURL("/_favicon/"));
+    url.searchParams.set("pageUrl", pageUrl);
+    url.searchParams.set("size", "32");
+    return url.href;
+  }
+
+  function createFavicon(node) {
+    const image = document.createElement("img");
+    image.className = "favicon";
+    image.alt = "";
+    image.draggable = false;
+    image.referrerPolicy = "no-referrer";
+    image.src = faviconUrl(node.url);
+    image.addEventListener("error", () => {
+      image.hidden = true;
+    });
+    return image;
+  }
+
+  function renderTabs(tabs) {
+    tabItems.replaceChildren();
+    const fragment = document.createDocumentFragment();
+    const activeTab = tabs.find((tab) => tab.active);
+    addressInput.value = activeTab?.url ?? "";
+
+    for (const tab of tabs) {
+      const item = document.createElement("div");
+      item.className = "tab-item";
+      item.dataset.active = tab.active ? "true" : "false";
+      item.title = tab.title || tab.url || "Tab";
+      item.setAttribute("role", "button");
+      item.setAttribute("tabindex", "0");
+      item.setAttribute("aria-label", tab.title || "Tab");
+
+      const icon = document.createElement("img");
+      icon.className = "tab-favicon";
+      icon.alt = "";
+      icon.draggable = false;
+      if (tab.url) {
+        icon.src = faviconUrl(tab.url);
+      } else {
+        icon.hidden = true;
+      }
+      icon.addEventListener("error", () => {
+        icon.hidden = true;
+      });
+
+      const label = document.createElement("span");
+      label.className = "tab-label";
+      label.textContent = tab.title || "New Tab";
+
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "tab-close";
+      close.title = "Close tab";
+      close.setAttribute("aria-label", `Close ${label.textContent}`);
+      close.textContent = "×";
+      close.addEventListener("click", (event) => {
+        event.stopPropagation();
+        performAction({ type: "CLOSE_TAB", tabId: tab.id }, true);
+      });
+
+      const activate = () => {
+        if (!tab.active) {
+          performAction({ type: "ACTIVATE_TAB", tabId: tab.id });
+        }
+      };
+      item.addEventListener("click", activate);
+      item.addEventListener("auxclick", (event) => {
+        if (event.button === 1) {
+          event.preventDefault();
+          performAction({ type: "CLOSE_TAB", tabId: tab.id }, true);
+        }
+      });
+      item.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          activate();
+        }
+      });
+      item.append(icon, label, close);
+      fragment.append(item);
+    }
+
+    tabItems.append(fragment);
+    window.requestAnimationFrame(() => {
+      tabItems.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  }
+
+  async function performAction(message, refreshAfter = false) {
+    try {
+      const result = await sendMessage(message);
+      if (result?.ok === false) {
+        showStatus(result.error ?? "The action could not be completed.");
+        return;
+      }
+      if (refreshAfter && pointerInUi) {
+        await openBar();
+      }
+    } catch (error) {
+      showStatus(error instanceof Error ? error.message : "The action could not be completed.");
+    }
+  }
+
+  function createFolderIcon() {
+    const icon = document.createElement("span");
+    icon.className = "folder-icon";
+    icon.setAttribute("aria-hidden", "true");
+    return icon;
+  }
+
+  function createLabel(node) {
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = displayTitle(node);
+    return label;
+  }
+
+  function createBookmarkButton(node, menuItem = false) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = menuItem ? "menu-item bookmark" : "bar-item bookmark";
+    button.title = `${displayTitle(node)}\n${node.url}`;
+    if (menuItem) {
+      button.setAttribute("role", "menuitem");
+    }
+    button.append(createFavicon(node), createLabel(node));
+
+    button.addEventListener("click", (event) => openBookmark(node.url, event));
+    button.addEventListener("pointerdown", (event) => {
+      if (event.button === 1) {
+        // Process the middle button immediately because the menu may close
+        // before auxclick fires.
+        openBookmark(node.url, event);
+      }
+    });
+    button.addEventListener("auxclick", (event) => {
+      if (event.button === 1) {
+        // Prevent the browser from handling the pointerdown-opened link a
+        // second time and suppress automatic scrolling.
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    });
+
+    return button;
+  }
+
+  function createTopFolderButton(node) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "bar-item folder";
+    button.title = displayTitle(node);
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    button.append(createFolderIcon(), createLabel(node));
+
+    const reveal = () => openFolderMenu(node, button, 0);
+    button.addEventListener("pointerenter", reveal);
+    button.addEventListener("focus", reveal);
+    button.addEventListener("click", reveal);
+    button.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        reveal();
+      }
+    });
+
+    return button;
+  }
+
+  function renderBookmarks(bookmarks) {
+    clearStatus();
+    items.replaceChildren();
+    closeMenusFrom(0);
+    barEntries = [];
+    overflowBookmarks = [];
+    overflowButton.hidden = true;
+    overflowButton.setAttribute("aria-expanded", "false");
+
+    if (bookmarks.length === 0) {
+      const empty = document.createElement("span");
+      empty.className = "empty";
+      empty.textContent = "The bookmarks bar is empty";
+      items.append(empty);
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (const node of bookmarks) {
+      let element;
+      if (node.url) {
+        element = createBookmarkButton(node);
+        element.addEventListener("pointerenter", () => closeMenusFrom(0));
+      } else {
+        element = createTopFolderButton(node);
+      }
+      barEntries.push({ node, element });
+      fragment.append(element);
+    }
+    items.append(fragment);
+    scheduleOverflowUpdate();
+  }
+
+  function scheduleOverflowUpdate() {
+    if (overflowUpdateFrame) {
+      window.cancelAnimationFrame(overflowUpdateFrame);
+    }
+    overflowUpdateFrame = window.requestAnimationFrame(updateOverflow);
+  }
+
+  function updateOverflow() {
+    overflowUpdateFrame = 0;
+    closeMenusFrom(0);
+    overflowButton.hidden = true;
+    overflowButton.setAttribute("aria-expanded", "false");
+    overflowBookmarks = [];
+    scroller.scrollLeft = 0;
+
+    if (barEntries.length === 0 || items.scrollWidth <= scroller.clientWidth) {
+      return;
+    }
+
+    overflowButton.hidden = false;
+    const scrollerRight = scroller.getBoundingClientRect().right;
+    overflowBookmarks = barEntries
+      .filter(({ element }) => element.getBoundingClientRect().right > scrollerRight + 0.5)
+      .map(({ node }) => node);
+
+    if (overflowBookmarks.length === 0) {
+      overflowButton.hidden = true;
+      return;
+    }
+
+    overflowButton.setAttribute(
+      "aria-label",
+      `More bookmarks (${overflowBookmarks.length})`,
+    );
+  }
+
+  function toggleOverflowMenu() {
+    const currentMenu = menuPanels[0];
+    if (currentMenu?.nodeId === OVERFLOW_NODE_ID && currentMenu.anchor === overflowButton) {
+      closeMenusFrom(0);
+      return;
+    }
+
+    openFolderMenu(
+      {
+        id: OVERFLOW_NODE_ID,
+        title: "More bookmarks",
+        children: overflowBookmarks,
+      },
+      overflowButton,
+      0,
+    );
+  }
+
+  function scheduleMenuClose(depth = 0) {
+    clearTimer(menuHideTimer);
+    menuHideTimer = window.setTimeout(() => closeMenusFrom(depth), MENU_HIDE_DELAY_MS);
+  }
+
+  function cancelMenuClose() {
+    clearTimer(menuHideTimer);
+  }
+
+  function closeMenusFrom(depth) {
+    for (let index = menuPanels.length - 1; index >= depth; index -= 1) {
+      const entry = menuPanels[index];
+      entry.anchor?.setAttribute("aria-expanded", "false");
+      entry.panel.remove();
+      menuPanels.pop();
+    }
+  }
+
+  function positionMenu(panel, anchor, depth) {
+    const anchorRect = anchor.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const gap = 4;
+    const margin = 4;
+
+    let left = depth === 0 ? anchorRect.left : anchorRect.right + gap;
+    let top = depth === 0 ? anchorRect.bottom + gap : anchorRect.top;
+
+    if (left + panelRect.width > window.innerWidth - margin) {
+      left = depth === 0
+        ? anchorRect.right - panelRect.width
+        : anchorRect.left - panelRect.width - gap;
+    }
+
+    left = Math.max(margin, Math.min(left, window.innerWidth - panelRect.width - margin));
+    top = Math.max(margin, Math.min(top, window.innerHeight - panelRect.height - margin));
+
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.top = `${Math.round(top)}px`;
+  }
+
+  function openFolderMenu(node, anchor, depth) {
+    cancelMenuClose();
+
+    const existing = menuPanels[depth];
+    if (existing?.nodeId === node.id && existing.anchor === anchor) {
+      return;
+    }
+
+    closeMenusFrom(depth);
+    anchor.setAttribute("aria-expanded", "true");
+
+    const panel = document.createElement("div");
+    panel.className = "menu";
+    panel.setAttribute("role", "menu");
+    panel.setAttribute("aria-label", displayTitle(node));
+
+    const children = node.children ?? [];
+    if (children.length === 0) {
+      const empty = document.createElement("span");
+      empty.className = "menu-empty";
+      empty.textContent = "This folder is empty";
+      panel.append(empty);
+    } else {
+      for (const child of children) {
+        if (child.url) {
+          const bookmark = createBookmarkButton(child, true);
+          bookmark.addEventListener("pointerenter", () => closeMenusFrom(depth + 1));
+          panel.append(bookmark);
+          continue;
+        }
+
+        const folder = document.createElement("button");
+        folder.type = "button";
+        folder.className = "menu-item folder";
+        folder.setAttribute("role", "menuitem");
+        folder.setAttribute("aria-haspopup", "menu");
+        folder.setAttribute("aria-expanded", "false");
+        folder.append(createFolderIcon(), createLabel(child));
+
+        const arrow = document.createElement("span");
+        arrow.className = "submenu-arrow";
+        arrow.textContent = "›";
+        arrow.setAttribute("aria-hidden", "true");
+        folder.append(arrow);
+
+        const reveal = () => openFolderMenu(child, folder, depth + 1);
+        folder.addEventListener("pointerenter", reveal);
+        folder.addEventListener("focus", reveal);
+        folder.addEventListener("click", reveal);
+        folder.addEventListener("keydown", (event) => {
+          if (event.key === "ArrowRight" || event.key === "Enter") {
+            event.preventDefault();
+            reveal();
+          }
+        });
+        panel.append(folder);
+      }
+    }
+
+    panel.addEventListener("pointerenter", () => {
+      pointerInUi = true;
+      clearTimer(hideTimer);
+      cancelMenuClose();
+    });
+    panel.addEventListener("pointerleave", () => {
+      pointerInUi = false;
+      scheduleMenuClose(depth);
+      scheduleClose();
+    });
+
+    menuLayer.append(panel);
+    menuPanels[depth] = { panel, anchor, nodeId: node.id };
+    positionMenu(panel, anchor, depth);
+  }
+
+  async function openBookmark(url, event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    let disposition = "current-tab";
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey) {
+      disposition = "new-foreground-tab";
+    } else if (event.shiftKey) {
+      disposition = "new-window";
+    } else if (event.ctrlKey || event.metaKey || event.button === 1) {
+      disposition = "new-background-tab";
+    }
+
+    try {
+      const result = await sendMessage({ type: "OPEN_BOOKMARK", url, disposition });
+      if (result?.ok === false) {
+        showStatus(result.error ?? "The bookmark could not be opened.");
+        return;
+      }
+      if (disposition === "new-background-tab" && Array.isArray(result?.tabs)) {
+        renderTabs(result.tabs);
+      }
+      if (!isPointerOverUi()) {
+        closeBar();
+      }
+    } catch (error) {
+      showStatus(error instanceof Error ? error.message : "The bookmark could not be opened.");
+    }
+  }
+
+  trigger.addEventListener("pointerenter", () => {
+    pointerInUi = true;
+    scheduleOpen();
+  });
+  trigger.addEventListener("pointerleave", () => {
+    pointerInUi = false;
+    scheduleClose();
+  });
+
+  surface.addEventListener("pointerenter", () => {
+    pointerInUi = true;
+    clearTimer(hideTimer);
+  });
+  surface.addEventListener("pointerleave", () => {
+    pointerInUi = false;
+    scheduleMenuClose(0);
+    scheduleClose();
+  });
+
+  newTabButton.addEventListener("click", () => performAction({ type: "CREATE_TAB" }));
+  minimizeButton.addEventListener("click", () => performAction({ type: "MINIMIZE_WINDOW" }));
+  restoreButton.addEventListener("click", () => performAction({ type: "RESTORE_WINDOW" }));
+  closeWindowButton.addEventListener("click", () => performAction({ type: "CLOSE_WINDOW" }));
+  backButton.addEventListener("click", () => performAction({ type: "GO_BACK" }));
+  forwardButton.addEventListener("click", () => performAction({ type: "GO_FORWARD" }));
+  reloadButton.addEventListener("click", () => performAction({ type: "RELOAD_TAB" }));
+  addressForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    performAction({ type: "NAVIGATE", input: addressInput.value });
+  });
+  addressInput.addEventListener("focus", () => addressInput.select());
+
+  tabsScroller.addEventListener(
+    "wheel",
+    (event) => {
+      if (Math.abs(event.deltaY) > Math.abs(event.deltaX) && tabsScroller.scrollWidth > tabsScroller.clientWidth) {
+        event.preventDefault();
+        tabsScroller.scrollLeft += event.deltaY;
+      }
+    },
+    { passive: false },
+  );
+
+  scroller.addEventListener(
+    "wheel",
+    (event) => {
+      if (Math.abs(event.deltaY) > Math.abs(event.deltaX) && scroller.scrollWidth > scroller.clientWidth) {
+        event.preventDefault();
+        scroller.scrollLeft += event.deltaY;
+      }
+    },
+    { passive: false },
+  );
+
+  overflowButton.addEventListener("click", toggleOverflowMenu);
+  overflowButton.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      toggleOverflowMenu();
+    }
+  });
+
+  shadow.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeBar();
+    }
+  });
+
+  window.addEventListener("resize", scheduleFullscreenCheck, { passive: true });
+  window.addEventListener("resize", scheduleOverflowUpdate, { passive: true });
+  window.addEventListener("focus", scheduleFullscreenCheck, { passive: true });
+  document.addEventListener("visibilitychange", scheduleFullscreenCheck, { passive: true });
+  document.addEventListener("fullscreenchange", scheduleFullscreenCheck, { passive: true });
+  document.addEventListener(
+    "pointermove",
+    (event) => {
+      lastPointerY = event.clientY;
+      if (event.clientY > 3 || host.dataset.active === "true") {
+        return;
+      }
+
+      const now = performance.now();
+      if (now - lastTopEdgeStateCheck >= 300) {
+        lastTopEdgeStateCheck = now;
+        syncFullscreenState();
+      }
+    },
+    { capture: true, passive: true },
+  );
+
+  syncFullscreenState();
+})();

@@ -1,0 +1,61 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thank you for helping improve Chrome Immersive Fullscreen. Remove personal information before submitting.
+  - type: input
+    id: chrome-version
+    attributes:
+      label: Chrome version
+      placeholder: "Example: 138.0.7204.169"
+    validations:
+      required: true
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating system
+      placeholder: "Example: Windows 11 24H2"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Press F11 ...
+        3. Move the pointer ...
+    validations:
+      required: true
+  - type: textarea
+    id: page-type
+    attributes:
+      label: Test page and fullscreen mode
+      description: Do not include private URLs. State whether Chrome F11 or website-controlled fullscreen was active.
+    validations:
+      required: true
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add sanitized logs, screenshots, or recordings if useful.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I tested on an ordinary http:// or https:// page.
+          required: true
+        - label: I removed personal or sensitive information from this report.
+          required: true
