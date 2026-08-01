@@ -115,4 +115,4 @@ Bug reports and focused pull requests are welcome. Read [CONTRIBUTING.md](CONTRI
 
 ## License
 
-No open-source license has been selected yet. Unless a license is added, copyright law reserves all rights to the repository owner.
+This project is licensed under the [MIT License](LICENSE).
