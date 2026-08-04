@@ -41,8 +41,9 @@ Then manually verify:
 - normal, maximized, and F11 fullscreen windows;
 - top-edge activation and hover persistence;
 - tab switching, closing, middle-click closing, and new-tab creation;
-- Back, Forward, Reload, URL navigation, and search;
-- bookmarks, nested folders, overflow, and modifier-click behavior;
+- Back, Forward, Reload, dotted and local address navigation, and search;
+- bookmarks, nested folders, live refreshes, overflow-menu keyboard navigation, and modifier-click behavior;
+- address-field focus persistence while the pointer is outside the interface;
 - horizontal scrolling for long tab and bookmark rows;
 - minimize, restore, close, and prior-window-state restoration;
 - `Esc` behavior;

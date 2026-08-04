@@ -40,32 +40,27 @@ async function clearWindowStates(windowId) {
   ]);
 }
 
-function findBookmarksBar(nodes) {
+function collectBookmarksBars(nodes, matches) {
   for (const node of nodes ?? []) {
     if (node.folderType === "bookmarks-bar") {
-      return node;
+      matches.push(node);
     }
 
-    const match = findBookmarksBar(node.children);
-    if (match) {
-      return match;
-    }
+    collectBookmarksBars(node.children, matches);
+  }
+}
+
+function findBookmarksBars(nodes) {
+  const matches = [];
+  collectBookmarksBars(nodes, matches);
+  if (matches.length > 0) {
+    return matches;
   }
 
   // Older Chrome versions did not expose folderType. In those versions, the
   // built-in ID of the bookmarks bar is 1.
-  for (const node of nodes ?? []) {
-    if (node.id === "1") {
-      return node;
-    }
-
-    const match = findNodeById(node.children, "1");
-    if (match) {
-      return match;
-    }
-  }
-
-  return null;
+  const legacyBookmarksBar = findNodeById(nodes, "1");
+  return legacyBookmarksBar ? [legacyBookmarksBar] : [];
 }
 
 function findNodeById(nodes, id) {
@@ -104,8 +99,6 @@ function sanitizeTab(tab) {
   return {
     id: tab.id,
     active: tab.active === true,
-    pinned: tab.pinned === true,
-    status: tab.status ?? "complete",
     title: String(tab.title ?? "New Tab"),
     url: String(tab.pendingUrl ?? tab.url ?? ""),
   };
@@ -145,11 +138,13 @@ async function getImmersiveData(sender) {
     chrome.bookmarks.getTree(),
     chrome.tabs.query({ windowId }),
   ]);
-  const bookmarksBar = findBookmarksBar(tree);
+  const bookmarksBars = findBookmarksBars(tree);
 
   return {
     enabled: true,
-    bookmarks: (bookmarksBar?.children ?? []).map(sanitizeNode),
+    bookmarks: bookmarksBars.flatMap((bookmarksBar) => (
+      bookmarksBar.children ?? []
+    )).map(sanitizeNode),
     tabs: tabs.sort((first, second) => first.index - second.index).map(sanitizeTab),
   };
 }
@@ -245,14 +240,17 @@ function resolveAddressInput(rawInput) {
   try {
     return { url: validateBookmarkUrl(input) };
   } catch {
-    const resemblesHost = !/\s/.test(input) && (
-      input === "localhost" ||
-      input.startsWith("localhost:") ||
-      input.includes(".")
-    );
+    const isLocalAddress = resemblesLocalAddress(input);
+    const hasUnsupportedScheme = /^[a-z][a-z0-9+.-]*:/i.test(input) &&
+      !isLocalAddress;
+    const resemblesHost = !hasUnsupportedScheme &&
+      !/\s/.test(input) &&
+      !input.includes("@") &&
+      (isLocalAddress || input.includes("."));
     if (resemblesHost) {
       try {
-        return { url: validateBookmarkUrl(`https://${input}`) };
+        const protocol = isLocalAddress ? "http" : "https";
+        return { url: validateBookmarkUrl(protocol + "://" + input) };
       } catch {
         // If this is not a valid address, send it to the default search engine.
       }
@@ -260,6 +258,41 @@ function resolveAddressInput(rawInput) {
   }
 
   return { search: input };
+}
+
+function resemblesLocalAddress(input) {
+  const authority = input.split(/[/?#]/, 1)[0];
+  if (/^\[[0-9a-f:.]+\](?::\d+)?$/i.test(authority)) {
+    return true;
+  }
+
+  const hostMatch = authority.match(/^([^:]+)(?::(\d+))?$/);
+  if (!hostMatch) {
+    return false;
+  }
+
+  const hostname = hostMatch[1].toLowerCase();
+  const hasPort = hostMatch[2] !== undefined;
+  if (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".local")
+  ) {
+    return true;
+  }
+
+  const ipv4Parts = hostname.split(".");
+  if (
+    ipv4Parts.length === 4 &&
+    ipv4Parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+  ) {
+    return true;
+  }
+
+  const hasPath = input.length > authority.length && input[authority.length] === "/";
+  return !hostname.includes(".") &&
+    /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(hostname) &&
+    (hasPort || hasPath);
 }
 
 async function navigate(message, sender) {
@@ -381,6 +414,76 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 chrome.windows.onRemoved.addListener((windowId) => {
   clearWindowStates(windowId).catch(() => {});
 });
+
+async function sendImmersiveRefresh(query) {
+  const tabs = await chrome.tabs.query(query);
+  await Promise.allSettled(
+    tabs
+      .filter((tab) => Number.isInteger(tab.id))
+      .map((tab) => chrome.tabs.sendMessage(tab.id, {
+        type: "REFRESH_IMMERSIVE_DATA",
+      })),
+  );
+}
+
+function notifyActiveTabInWindow(windowId) {
+  if (!Number.isInteger(windowId)) {
+    return;
+  }
+
+  sendImmersiveRefresh({ active: true, windowId }).catch(() => {});
+}
+
+function notifyActiveTabs() {
+  sendImmersiveRefresh({ active: true }).catch(() => {});
+}
+
+chrome.tabs.onActivated.addListener(({ windowId }) => {
+  notifyActiveTabInWindow(windowId);
+});
+
+chrome.tabs.onCreated.addListener((tab) => {
+  notifyActiveTabInWindow(tab.windowId);
+});
+
+chrome.tabs.onMoved.addListener((_tabId, moveInfo) => {
+  notifyActiveTabInWindow(moveInfo.windowId);
+});
+
+chrome.tabs.onRemoved.addListener((_tabId, removeInfo) => {
+  notifyActiveTabInWindow(removeInfo.windowId);
+});
+
+chrome.tabs.onAttached.addListener((_tabId, attachInfo) => {
+  notifyActiveTabInWindow(attachInfo.newWindowId);
+});
+
+chrome.tabs.onDetached.addListener((_tabId, detachInfo) => {
+  notifyActiveTabInWindow(detachInfo.oldWindowId);
+});
+
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+  if (
+    changeInfo.title === undefined &&
+    changeInfo.url === undefined &&
+    changeInfo.favIconUrl === undefined
+  ) {
+    return;
+  }
+
+  notifyActiveTabInWindow(tab.windowId);
+});
+
+for (const event of [
+  chrome.bookmarks.onCreated,
+  chrome.bookmarks.onRemoved,
+  chrome.bookmarks.onChanged,
+  chrome.bookmarks.onMoved,
+  chrome.bookmarks.onChildrenReordered,
+  chrome.bookmarks.onImportEnded,
+]) {
+  event.addListener(notifyActiveTabs);
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   let operation;

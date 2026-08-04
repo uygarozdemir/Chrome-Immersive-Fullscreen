@@ -12,8 +12,8 @@ Chrome Immersive Fullscreen does not collect, transmit, sell, share, or retain p
 
 The extension accesses the minimum browser data needed to provide its visible features:
 
-- **Tabs:** titles, URLs, active state, loading state, and window association for tabs in the current window.
-- **Bookmarks:** titles, URLs, and folder structure from Chrome's Bookmarks Bar.
+- **Tabs:** titles, URLs, active state, and window association for tabs in the current window.
+- **Bookmarks:** titles, URLs, and folder structure from Chrome's Bookmarks Bar folders.
 - **Favicons:** icons supplied by Chrome's local favicon cache.
 - **Window state:** whether the current window is normal, maximized, minimized, or fullscreen.
 - **User-entered navigation:** text entered into the extension's address field.

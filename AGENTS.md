@@ -20,8 +20,8 @@ Be explicit about uncertainty. Distinguish verified facts from inference, and do
 This repository is a dependency-free Chrome Manifest V3 extension. Keep the flat structure unless the project grows enough to justify modules:
 
 - `manifest.json` defines permissions, the service worker, content scripts, and exposed resources.
-- `service-worker.js` validates fullscreen state; reads tabs and bookmarks; and handles navigation, search, and window actions.
-- `content.js` builds the three-row Shadow DOM interface and handles tabs, navigation, window controls, pointer and keyboard input, menus, and scrolling.
+- `service-worker.js` validates fullscreen state; reads tabs and bookmark bars; handles navigation, search, and window actions; and notifies active tabs about live data changes.
+- `content.js` builds the three-row Shadow DOM interface and handles tabs, navigation, window controls, pointer and keyboard input, menus, focus preservation, live refreshes, and scrolling.
 - `content.css` contains the isolated Chrome-like surface, tab strip, navigation, bookmark, window-control, and menu styles.
 - `page.css` hides the page scrollbar only while the F11 interface is active so the overlay reaches the physical right edge.
 - `README.md` explains behavior and limitations; `INSTALLATION.md` contains detailed installation instructions.
@@ -45,7 +45,7 @@ Use two-space indentation in JavaScript, CSS, and JSON. Preserve strict mode, se
 
 ## Testing
 
-Testing is manual. Verify normal and F11 windows, top-edge activation and hover persistence, tab actions, address and search navigation, window-state restoration, nested folders, horizontal scrolling, middle/modifier-click behavior, `Esc`, and HTML/video fullscreen suppression. Test on ordinary `http://` or `https://` pages; Chrome internal pages do not accept content scripts. Document the Chrome version and scenarios checked in pull requests.
+Testing is manual. Verify normal and F11 windows, top-edge activation and hover/focus persistence, tab actions, dotted and local address resolution, search navigation, live tab and bookmark refreshes, window-state restoration, nested folders, overflow-menu keyboard navigation, horizontal scrolling, middle/modifier-click behavior, `Esc`, and HTML/video fullscreen suppression. Test on ordinary `http://` or `https://` pages; Chrome internal pages do not accept content scripts. Document the Chrome version and scenarios checked in pull requests.
 
 ## Commits and pull requests
 

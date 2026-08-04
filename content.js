@@ -156,6 +156,8 @@
   let hideTimer = 0;
   let menuHideTimer = 0;
   let fullscreenCheckTimer = 0;
+  let dataRefreshTimer = 0;
+  let dataRefreshPending = false;
   let requestNumber = 0;
   let pointerInUi = false;
   let lastPointerY = Number.POSITIVE_INFINITY;
@@ -188,7 +190,7 @@
     host.dataset.active = active ? "true" : "false";
     document.documentElement.toggleAttribute(PAGE_ACTIVE_ATTRIBUTE, active);
     if (!active) {
-      closeBar(true);
+      closeBar();
     }
   }
 
@@ -217,8 +219,45 @@
     showTimer = window.setTimeout(openBar, SHOW_DELAY_MS);
   }
 
-  function isPointerOverUi() {
-    return surface.matches(":hover") ||
+  function scheduleDataRefresh() {
+    if (
+      host.dataset.active !== "true" ||
+      host.dataset.open !== "true"
+    ) {
+      dataRefreshPending = false;
+      return;
+    }
+
+    dataRefreshPending = true;
+    if (shadow.activeElement !== null || menuPanels.length > 0) {
+      return;
+    }
+
+    clearTimer(dataRefreshTimer);
+    dataRefreshTimer = window.setTimeout(() => {
+      dataRefreshTimer = 0;
+      if (
+        shadow.activeElement !== null ||
+        menuPanels.length > 0
+      ) {
+        return;
+      }
+
+      dataRefreshPending = false;
+      if (
+        host.dataset.active === "true" &&
+        host.dataset.open === "true" &&
+        isUiEngaged()
+      ) {
+        pointerInUi = true;
+        openBar();
+      }
+    }, 80);
+  }
+
+  function isUiEngaged() {
+    return shadow.activeElement !== null ||
+      surface.matches(":hover") ||
       trigger.matches(":hover") ||
       menuPanels.some(({ panel }) => panel.matches(":hover"));
   }
@@ -227,7 +266,7 @@
     clearTimer(showTimer);
     clearTimer(hideTimer);
     hideTimer = window.setTimeout(() => {
-      if (isPointerOverUi()) {
+      if (isUiEngaged()) {
         pointerInUi = true;
         return;
       }
@@ -238,14 +277,25 @@
   }
 
   async function openBar() {
-    if (!pointerInUi || host.dataset.active !== "true") {
+    if (
+      (!pointerInUi && shadow.activeElement === null) ||
+      host.dataset.active !== "true"
+    ) {
       return;
     }
 
     const currentRequest = ++requestNumber;
     try {
       const result = await sendMessage({ type: "GET_IMMERSIVE_DATA" });
-      if (currentRequest !== requestNumber || !pointerInUi) {
+      if (
+        currentRequest !== requestNumber ||
+        (!pointerInUi && shadow.activeElement === null)
+      ) {
+        return;
+      }
+
+      if (result?.ok === false) {
+        showDataError(result.error ?? "Browser data could not be loaded.");
         return;
       }
 
@@ -258,23 +308,21 @@
       renderBookmarks(result.bookmarks ?? []);
       host.dataset.open = "true";
     } catch (error) {
-      showStatus(error instanceof Error ? error.message : "Bookmarks could not be loaded.");
-      host.dataset.open = "true";
+      showDataError(
+        error instanceof Error ? error.message : "Browser data could not be loaded.",
+      );
     }
   }
 
-  function closeBar(immediate = false) {
+  function closeBar() {
     requestNumber += 1;
     clearTimer(showTimer);
     clearTimer(hideTimer);
     clearTimer(menuHideTimer);
+    clearTimer(dataRefreshTimer);
+    dataRefreshPending = false;
     closeMenusFrom(0);
-
-    if (immediate) {
-      host.dataset.open = "false";
-      return;
-    }
-
+    shadow.activeElement?.blur();
     host.dataset.open = "false";
   }
 
@@ -287,6 +335,23 @@
   function clearStatus() {
     status.textContent = "";
     status.hidden = true;
+  }
+
+  function clearRenderedData() {
+    tabItems.replaceChildren();
+    addressInput.value = "";
+    items.replaceChildren();
+    closeMenusFrom(0);
+    barEntries = [];
+    overflowBookmarks = [];
+    overflowButton.hidden = true;
+    overflowButton.setAttribute("aria-expanded", "false");
+  }
+
+  function showDataError(message) {
+    clearRenderedData();
+    showStatus(message);
+    host.dataset.open = "true";
   }
 
   function displayTitle(node) {
@@ -464,14 +529,24 @@
     button.setAttribute("aria-expanded", "false");
     button.append(createFolderIcon(), createLabel(node));
 
-    const reveal = () => openFolderMenu(node, button, 0);
-    button.addEventListener("pointerenter", reveal);
-    button.addEventListener("focus", reveal);
-    button.addEventListener("click", reveal);
+    const reveal = (focusPosition = null) => {
+      openFolderMenu(node, button, 0, focusPosition);
+    };
+    button.addEventListener("pointerenter", () => reveal());
+    button.addEventListener("click", (event) => {
+      reveal(event.detail === 0 ? "first" : null);
+    });
     button.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+      if (
+        event.key === "ArrowDown" ||
+        event.key === "Enter" ||
+        event.key === " "
+      ) {
         event.preventDefault();
-        reveal();
+        reveal("first");
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        reveal("last");
       }
     });
 
@@ -547,10 +622,14 @@
     );
   }
 
-  function toggleOverflowMenu() {
+  function toggleOverflowMenu(focusPosition = null) {
     const currentMenu = menuPanels[0];
     if (currentMenu?.nodeId === OVERFLOW_NODE_ID && currentMenu.anchor === overflowButton) {
-      closeMenusFrom(0);
+      if (focusPosition) {
+        focusMenuItem(currentMenu.panel, focusPosition);
+      } else {
+        closeMenusFrom(0);
+      }
       return;
     }
 
@@ -562,6 +641,7 @@
       },
       overflowButton,
       0,
+      focusPosition,
     );
   }
 
@@ -580,6 +660,14 @@
       entry.anchor?.setAttribute("aria-expanded", "false");
       entry.panel.remove();
       menuPanels.pop();
+    }
+
+    if (
+      menuPanels.length === 0 &&
+      dataRefreshPending &&
+      shadow.activeElement === null
+    ) {
+      scheduleDataRefresh();
     }
   }
 
@@ -605,11 +693,72 @@
     panel.style.top = `${Math.round(top)}px`;
   }
 
-  function openFolderMenu(node, anchor, depth) {
+  function getMenuItems(panel) {
+    return Array.from(panel.children).filter((element) => (
+      element.classList.contains("menu-item")
+    ));
+  }
+
+  function focusMenuItem(panel, position) {
+    const menuItems = getMenuItems(panel);
+    const item = position === "last"
+      ? menuItems.at(-1)
+      : menuItems[0];
+    if (item) {
+      item.focus();
+      return;
+    }
+
+    panel.tabIndex = -1;
+    panel.focus();
+  }
+
+  function handleMenuKeydown(event, panel, anchor, depth) {
+    if (event.key === "Escape" || event.key === "ArrowLeft") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMenusFrom(depth);
+      anchor.focus();
+      return;
+    }
+
+    const menuItems = getMenuItems(panel);
+    const currentIndex = menuItems.indexOf(event.target);
+    if (currentIndex < 0) {
+      return;
+    }
+
+    let nextIndex = null;
+    switch (event.key) {
+      case "ArrowDown":
+        nextIndex = (currentIndex + 1) % menuItems.length;
+        break;
+      case "ArrowUp":
+        nextIndex = (currentIndex - 1 + menuItems.length) % menuItems.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = menuItems.length - 1;
+        break;
+      default:
+        return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    menuItems[nextIndex].focus();
+  }
+
+  function openFolderMenu(node, anchor, depth, focusPosition = null) {
     cancelMenuClose();
 
     const existing = menuPanels[depth];
     if (existing?.nodeId === node.id && existing.anchor === anchor) {
+      if (focusPosition) {
+        focusMenuItem(existing.panel, focusPosition);
+      }
       return;
     }
 
@@ -650,20 +799,31 @@
         arrow.setAttribute("aria-hidden", "true");
         folder.append(arrow);
 
-        const reveal = () => openFolderMenu(child, folder, depth + 1);
-        folder.addEventListener("pointerenter", reveal);
-        folder.addEventListener("focus", reveal);
-        folder.addEventListener("click", reveal);
+        const reveal = (focusPosition = null) => {
+          openFolderMenu(child, folder, depth + 1, focusPosition);
+        };
+        folder.addEventListener("pointerenter", () => reveal());
+        folder.addEventListener("click", (event) => {
+          reveal(event.detail === 0 ? "first" : null);
+        });
         folder.addEventListener("keydown", (event) => {
-          if (event.key === "ArrowRight" || event.key === "Enter") {
+          if (
+            event.key === "ArrowRight" ||
+            event.key === "Enter" ||
+            event.key === " "
+          ) {
             event.preventDefault();
-            reveal();
+            event.stopPropagation();
+            reveal("first");
           }
         });
         panel.append(folder);
       }
     }
 
+    panel.addEventListener("keydown", (event) => {
+      handleMenuKeydown(event, panel, anchor, depth);
+    });
     panel.addEventListener("pointerenter", () => {
       pointerInUi = true;
       clearTimer(hideTimer);
@@ -678,6 +838,9 @@
     menuLayer.append(panel);
     menuPanels[depth] = { panel, anchor, nodeId: node.id };
     positionMenu(panel, anchor, depth);
+    if (focusPosition) {
+      focusMenuItem(panel, focusPosition);
+    }
   }
 
   async function openBookmark(url, event) {
@@ -702,7 +865,7 @@
       if (disposition === "new-background-tab" && Array.isArray(result?.tabs)) {
         renderTabs(result.tabs);
       }
-      if (!isPointerOverUi()) {
+      if (!isUiEngaged()) {
         closeBar();
       }
     } catch (error) {
@@ -764,11 +927,16 @@
     { passive: false },
   );
 
-  overflowButton.addEventListener("click", toggleOverflowMenu);
+  overflowButton.addEventListener("click", (event) => {
+    toggleOverflowMenu(event.detail === 0 ? "first" : null);
+  });
   overflowButton.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      toggleOverflowMenu();
+      toggleOverflowMenu("first");
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      toggleOverflowMenu("last");
     }
   });
 
@@ -777,6 +945,28 @@
       event.preventDefault();
       closeBar();
     }
+  });
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.type === "REFRESH_IMMERSIVE_DATA") {
+      scheduleDataRefresh();
+    }
+  });
+
+  shadow.addEventListener("focusin", () => {
+    pointerInUi = true;
+    clearTimer(hideTimer);
+  });
+  shadow.addEventListener("focusout", () => {
+    window.requestAnimationFrame(() => {
+      if (dataRefreshPending) {
+        scheduleDataRefresh();
+      }
+      if (host.dataset.open === "true" && !isUiEngaged()) {
+        pointerInUi = false;
+        scheduleClose();
+      }
+    });
   });
 
   window.addEventListener("resize", scheduleFullscreenCheck, { passive: true });

@@ -37,7 +37,14 @@ Chrome Immersive Fullscreen is a dependency-free Manifest V3 extension. It is lo
 - Ctrl/Cmd+Shift-click: open in a foreground tab.
 - Shift-click: open in a new window.
 - Hover over a folder to reveal nested bookmarks.
+- With keyboard focus on a folder, press `Enter`, `Space`, `ArrowDown`, or `ArrowUp` to open it; use arrow keys, `Home`, and `End` inside menus.
 - Use the `»` button when bookmarks do not fit on the bar.
+
+## Address field
+
+- Enter full URLs and dotted hostnames directly.
+- Local hostnames with a port or path, IPv4 addresses, and bracketed IPv6 addresses open over HTTP when no scheme is provided.
+- Other input is sent to Chrome's configured default search engine.
 
 ## Reload after source changes
 
