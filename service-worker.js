@@ -319,7 +319,11 @@ async function minimizeCurrentWindow(sender) {
 async function restoreCurrentWindow(sender) {
   const windowId = getSenderWindowId(sender);
   const previousState = await readWindowState(LAST_WINDOW_STATE_PREFIX, windowId);
-  await chrome.windows.update(windowId, { state: previousState ?? "maximized" });
+  if (!previousState) {
+    throw new Error("The previous window state is unavailable.");
+  }
+
+  await chrome.windows.update(windowId, { state: previousState });
   return { ok: true };
 }
 
