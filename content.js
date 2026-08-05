@@ -244,14 +244,17 @@
       }
 
       dataRefreshPending = false;
-      if (
-        host.dataset.active === "true" &&
-        host.dataset.open === "true" &&
-        isUiEngaged()
-      ) {
-        pointerInUi = true;
-        openBar();
+      if (host.dataset.active !== "true" || host.dataset.open !== "true") {
+        return;
       }
+
+      if (!isUiEngaged()) {
+        closeBar();
+        return;
+      }
+
+      pointerInUi = true;
+      openBar();
     }, 80);
   }
 
@@ -972,7 +975,17 @@
   window.addEventListener("resize", scheduleFullscreenCheck, { passive: true });
   window.addEventListener("resize", scheduleOverflowUpdate, { passive: true });
   window.addEventListener("focus", scheduleFullscreenCheck, { passive: true });
-  document.addEventListener("visibilitychange", scheduleFullscreenCheck, { passive: true });
+  function handleVisibilityChange() {
+    if (document.hidden) {
+      pointerInUi = false;
+      lastPointerY = Number.POSITIVE_INFINITY;
+      closeBar();
+      return;
+    }
+
+    scheduleFullscreenCheck();
+  }
+  document.addEventListener("visibilitychange", handleVisibilityChange, { passive: true });
   document.addEventListener("fullscreenchange", scheduleFullscreenCheck, { passive: true });
   document.addEventListener(
     "pointermove",
