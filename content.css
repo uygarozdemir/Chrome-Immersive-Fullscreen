@@ -143,6 +143,10 @@ button {
   cursor: grabbing;
 }
 
+#tab-items[data-dragging="true"] .tab-item:not(.dragging) {
+  transition: transform 120ms ease;
+}
+
 .tab-item.dragging {
   z-index: 1;
   color: #f1f3f4;
@@ -565,7 +569,8 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #surface {
+  #surface,
+  #tab-items[data-dragging="true"] .tab-item:not(.dragging) {
     transition: none;
   }
 }

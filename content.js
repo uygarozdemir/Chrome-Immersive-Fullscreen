@@ -491,9 +491,16 @@
     return Array.prototype.indexOf.call(tabItems.children, item);
   }
 
-  function centerOf(element) {
-    const rect = element.getBoundingClientRect();
-    return rect.left + rect.width / 2;
+  function moveTabItem(item, index) {
+    const others = Array.prototype.filter.call(
+      tabItems.children,
+      (element) => element !== item,
+    );
+    tabItems.insertBefore(item, others[index] ?? null);
+  }
+
+  function slotCenter(slot) {
+    return slot.left + slot.width / 2;
   }
 
   function beginTabDrag(event, item, tabId) {
@@ -512,14 +519,51 @@
       item,
       tabId,
       startX: event.clientX,
+      startScroll: tabsScroller.scrollLeft,
       pointerX: event.clientX,
-      offsetX: event.clientX - item.getBoundingClientRect().left,
-      startIndex: tabItemIndex(item),
+      startIndex: -1,
+      targetIndex: -1,
+      offsetX: 0,
+      slots: [],
+      rowLeft: 0,
+      rowRight: 0,
       active: false,
       scrollFrame: 0,
     };
     // Capture the pointer so the drag survives the cursor leaving the strip.
     item.setPointerCapture(event.pointerId);
+  }
+
+  function activateTabDrag() {
+    const drag = tabDrag;
+    const startIndex = tabItemIndex(drag.item);
+    if (startIndex < 0) {
+      cancelTabDrag();
+      return false;
+    }
+
+    // Measure every tab once, in scroller content coordinates, so the layout
+    // stays valid while the strip scrolls. The strip is never reordered during
+    // the drag: moving the captured tab in the DOM would release its pointer
+    // capture and drop the drag.
+    const scrollLeft = tabsScroller.scrollLeft;
+    const slots = Array.prototype.map.call(tabItems.children, (element) => {
+      const rect = element.getBoundingClientRect();
+      return { element, left: rect.left + scrollLeft, width: rect.width };
+    });
+    const own = slots[startIndex];
+
+    drag.startIndex = startIndex;
+    drag.targetIndex = startIndex;
+    drag.slots = slots;
+    drag.offsetX = drag.startX + drag.startScroll - own.left;
+    drag.rowLeft = slots[0].left;
+    drag.rowRight = slots.at(-1).left + slots.at(-1).width;
+    drag.active = true;
+    drag.item.classList.add("dragging");
+    tabItems.dataset.dragging = "true";
+    drag.scrollFrame = window.requestAnimationFrame(stepTabDragScroll);
+    return true;
   }
 
   function updateTabDrag(event) {
@@ -533,42 +577,63 @@
         return;
       }
 
-      tabDrag.active = true;
-      tabDrag.item.classList.add("dragging");
-      tabItems.dataset.dragging = "true";
-      tabDrag.scrollFrame = window.requestAnimationFrame(stepTabDragScroll);
+      if (!activateTabDrag()) {
+        return;
+      }
     }
 
     layoutTabDrag();
   }
 
+  function targetIndexFor(drag, center) {
+    const own = slotCenter(drag.slots[drag.startIndex]);
+    let index = 0;
+    for (let position = 0; position < drag.slots.length; position += 1) {
+      if (position === drag.startIndex) {
+        continue;
+      }
+
+      // Count the tabs the dragged one has passed. The comparison leans towards
+      // the direction of travel so the outermost slots stay reachable even
+      // though the dragged tab is clamped to the strip.
+      const other = slotCenter(drag.slots[position]);
+      const passed = center >= own
+        ? other <= center + TAB_DRAG_SWAP_TOLERANCE_PX
+        : other < center - TAB_DRAG_SWAP_TOLERANCE_PX;
+      if (passed) {
+        index += 1;
+      }
+    }
+
+    return index;
+  }
+
   function layoutTabDrag() {
-    const item = tabDrag.item;
-    // Measure the untransformed layout slot so reordering stays predictable.
-    item.style.transform = "";
-    const width = item.getBoundingClientRect().width;
-    const minLeft = tabItems.firstElementChild.getBoundingClientRect().left;
-    const maxLeft = tabItems.lastElementChild.getBoundingClientRect().right - width;
+    const drag = tabDrag;
+    const own = drag.slots[drag.startIndex];
+    const contentX = drag.pointerX + tabsScroller.scrollLeft;
     const left = Math.max(
-      minLeft,
-      Math.min(tabDrag.pointerX - tabDrag.offsetX, maxLeft),
+      drag.rowLeft,
+      Math.min(contentX - drag.offsetX, drag.rowRight - own.width),
     );
-    const center = left + width / 2;
+    drag.targetIndex = targetIndexFor(drag, left + own.width / 2);
 
-    let previous = item.previousElementSibling;
-    while (previous !== null && center < centerOf(previous) + TAB_DRAG_SWAP_TOLERANCE_PX) {
-      tabItems.insertBefore(item, previous);
-      previous = item.previousElementSibling;
+    for (let position = 0; position < drag.slots.length; position += 1) {
+      const slot = drag.slots[position];
+      if (position === drag.startIndex) {
+        slot.element.style.transform = `translateX(${Math.round(left - slot.left)}px)`;
+        continue;
+      }
+
+      let shift = 0;
+      if (position > drag.startIndex && position <= drag.targetIndex) {
+        shift = -own.width;
+      } else if (position < drag.startIndex && position >= drag.targetIndex) {
+        shift = own.width;
+      }
+
+      slot.element.style.transform = shift === 0 ? "" : `translateX(${shift}px)`;
     }
-
-    let next = item.nextElementSibling;
-    while (next !== null && center > centerOf(next) - TAB_DRAG_SWAP_TOLERANCE_PX) {
-      tabItems.insertBefore(item, next.nextElementSibling);
-      next = item.nextElementSibling;
-    }
-
-    const offset = left - item.getBoundingClientRect().left;
-    item.style.transform = `translateX(${Math.round(offset)}px)`;
   }
 
   function stepTabDragScroll() {
@@ -603,6 +668,10 @@
       window.cancelAnimationFrame(drag.scrollFrame);
     }
 
+    for (const slot of drag.slots) {
+      slot.element.style.transform = "";
+    }
+
     drag.item.style.transform = "";
     drag.item.classList.remove("dragging");
     delete tabItems.dataset.dragging;
@@ -623,19 +692,25 @@
     }
 
     const wasActive = tabDrag.active;
-    const toIndex = tabItemIndex(tabDrag.item);
     const drag = releaseTabDrag();
-    if (!wasActive || toIndex < 0) {
+    if (!wasActive) {
       return;
     }
 
     // The pointer moved, so the click that follows must not activate the tab.
     suppressTabClick = true;
-    if (toIndex !== drag.startIndex) {
-      // Refresh afterwards because Chrome may clamp the index, for example
-      // when pinned tabs occupy the leading positions.
-      performAction({ type: "MOVE_TAB", tabId: drag.tabId, toIndex }, true);
+    if (drag.targetIndex === drag.startIndex) {
+      return;
     }
+
+    // Reorder the strip now that the pointer capture is gone, then refresh
+    // because Chrome may clamp the index, for example when pinned tabs occupy
+    // the leading positions.
+    moveTabItem(drag.item, drag.targetIndex);
+    performAction(
+      { type: "MOVE_TAB", tabId: drag.tabId, toIndex: drag.targetIndex },
+      true,
+    );
   }
 
   function cancelTabDrag(event) {
@@ -643,12 +718,9 @@
       return;
     }
 
+    // The strip order is never touched while dragging, so dropping the
+    // transforms restores the original layout.
     if (tabDrag.active) {
-      const others = Array.prototype.filter.call(
-        tabItems.children,
-        (element) => element !== tabDrag.item,
-      );
-      tabItems.insertBefore(tabDrag.item, others[tabDrag.startIndex] ?? null);
       suppressTabClick = true;
     }
 
