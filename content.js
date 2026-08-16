@@ -5,6 +5,13 @@
   const SHOW_DELAY_MS = 150;
   const HIDE_DELAY_MS = 80;
   const MENU_HIDE_DELAY_MS = 180;
+  const TAB_DRAG_THRESHOLD_PX = 5;
+  const TAB_DRAG_EDGE_PX = 34;
+  const TAB_DRAG_SCROLL_STEP_PX = 14;
+  // The dragged tab is clamped to the strip, so its center can only just reach
+  // the center of the outermost slot. This tolerance keeps those slots
+  // reachable despite subpixel layout.
+  const TAB_DRAG_SWAP_TOLERANCE_PX = 0.5;
   const OVERFLOW_NODE_ID = "__overflow-bookmarks__";
   const PAGE_ACTIVE_ATTRIBUTE = "data-chrome-immersive-fullscreen-active";
 
@@ -166,6 +173,8 @@
   let barEntries = [];
   let overflowBookmarks = [];
   let overflowUpdateFrame = 0;
+  let tabDrag = null;
+  let suppressTabClick = false;
 
   function sendMessage(message) {
     return new Promise((resolve, reject) => {
@@ -229,7 +238,7 @@
     }
 
     dataRefreshPending = true;
-    if (shadow.activeElement !== null || menuPanels.length > 0) {
+    if (shadow.activeElement !== null || menuPanels.length > 0 || tabDrag !== null) {
       return;
     }
 
@@ -238,7 +247,8 @@
       dataRefreshTimer = 0;
       if (
         shadow.activeElement !== null ||
-        menuPanels.length > 0
+        menuPanels.length > 0 ||
+        tabDrag !== null
       ) {
         return;
       }
@@ -318,6 +328,7 @@
   }
 
   function closeBar() {
+    cancelTabDrag();
     requestNumber += 1;
     clearTimer(showTimer);
     clearTimer(hideTimer);
@@ -394,6 +405,13 @@
   }
 
   function renderTabs(tabs) {
+    if (tabDrag !== null) {
+      // Rebuilding the strip mid-drag would drop the dragged tab. Let the
+      // pending refresh run once the drag ends.
+      dataRefreshPending = true;
+      return;
+    }
+
     tabItems.replaceChildren();
     const fragment = document.createDocumentFragment();
     const activeTab = tabs.find((tab) => tab.active);
@@ -454,6 +472,11 @@
           activate();
         }
       });
+      item.addEventListener("pointerdown", (event) => beginTabDrag(event, item, tab.id));
+      item.addEventListener("pointermove", updateTabDrag);
+      item.addEventListener("pointerup", finishTabDrag);
+      item.addEventListener("pointercancel", cancelTabDrag);
+      item.addEventListener("lostpointercapture", cancelTabDrag);
       item.append(icon, label, close);
       fragment.append(item);
     }
@@ -462,6 +485,174 @@
     window.requestAnimationFrame(() => {
       tabItems.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
     });
+  }
+
+  function tabItemIndex(item) {
+    return Array.prototype.indexOf.call(tabItems.children, item);
+  }
+
+  function centerOf(element) {
+    const rect = element.getBoundingClientRect();
+    return rect.left + rect.width / 2;
+  }
+
+  function beginTabDrag(event, item, tabId) {
+    suppressTabClick = false;
+    if (
+      event.button !== 0 ||
+      tabDrag !== null ||
+      !Number.isInteger(tabId) ||
+      (event.target instanceof Element && event.target.closest(".tab-close") !== null)
+    ) {
+      return;
+    }
+
+    tabDrag = {
+      pointerId: event.pointerId,
+      item,
+      tabId,
+      startX: event.clientX,
+      pointerX: event.clientX,
+      offsetX: event.clientX - item.getBoundingClientRect().left,
+      startIndex: tabItemIndex(item),
+      active: false,
+      scrollFrame: 0,
+    };
+    // Capture the pointer so the drag survives the cursor leaving the strip.
+    item.setPointerCapture(event.pointerId);
+  }
+
+  function updateTabDrag(event) {
+    if (tabDrag === null || event.pointerId !== tabDrag.pointerId) {
+      return;
+    }
+
+    tabDrag.pointerX = event.clientX;
+    if (!tabDrag.active) {
+      if (Math.abs(event.clientX - tabDrag.startX) < TAB_DRAG_THRESHOLD_PX) {
+        return;
+      }
+
+      tabDrag.active = true;
+      tabDrag.item.classList.add("dragging");
+      tabItems.dataset.dragging = "true";
+      tabDrag.scrollFrame = window.requestAnimationFrame(stepTabDragScroll);
+    }
+
+    layoutTabDrag();
+  }
+
+  function layoutTabDrag() {
+    const item = tabDrag.item;
+    // Measure the untransformed layout slot so reordering stays predictable.
+    item.style.transform = "";
+    const width = item.getBoundingClientRect().width;
+    const minLeft = tabItems.firstElementChild.getBoundingClientRect().left;
+    const maxLeft = tabItems.lastElementChild.getBoundingClientRect().right - width;
+    const left = Math.max(
+      minLeft,
+      Math.min(tabDrag.pointerX - tabDrag.offsetX, maxLeft),
+    );
+    const center = left + width / 2;
+
+    let previous = item.previousElementSibling;
+    while (previous !== null && center < centerOf(previous) + TAB_DRAG_SWAP_TOLERANCE_PX) {
+      tabItems.insertBefore(item, previous);
+      previous = item.previousElementSibling;
+    }
+
+    let next = item.nextElementSibling;
+    while (next !== null && center > centerOf(next) - TAB_DRAG_SWAP_TOLERANCE_PX) {
+      tabItems.insertBefore(item, next.nextElementSibling);
+      next = item.nextElementSibling;
+    }
+
+    const offset = left - item.getBoundingClientRect().left;
+    item.style.transform = `translateX(${Math.round(offset)}px)`;
+  }
+
+  function stepTabDragScroll() {
+    if (tabDrag === null || !tabDrag.active) {
+      return;
+    }
+
+    tabDrag.scrollFrame = window.requestAnimationFrame(stepTabDragScroll);
+    const rect = tabsScroller.getBoundingClientRect();
+    let delta = 0;
+    if (tabDrag.pointerX < rect.left + TAB_DRAG_EDGE_PX) {
+      delta = -TAB_DRAG_SCROLL_STEP_PX;
+    } else if (tabDrag.pointerX > rect.right - TAB_DRAG_EDGE_PX) {
+      delta = TAB_DRAG_SCROLL_STEP_PX;
+    }
+
+    if (delta === 0) {
+      return;
+    }
+
+    const previousScroll = tabsScroller.scrollLeft;
+    tabsScroller.scrollLeft += delta;
+    if (tabsScroller.scrollLeft !== previousScroll) {
+      layoutTabDrag();
+    }
+  }
+
+  function releaseTabDrag() {
+    const drag = tabDrag;
+    tabDrag = null;
+    if (drag.scrollFrame) {
+      window.cancelAnimationFrame(drag.scrollFrame);
+    }
+
+    drag.item.style.transform = "";
+    drag.item.classList.remove("dragging");
+    delete tabItems.dataset.dragging;
+    if (drag.item.hasPointerCapture(drag.pointerId)) {
+      drag.item.releasePointerCapture(drag.pointerId);
+    }
+
+    if (dataRefreshPending) {
+      scheduleDataRefresh();
+    }
+
+    return drag;
+  }
+
+  function finishTabDrag(event) {
+    if (tabDrag === null || event.pointerId !== tabDrag.pointerId) {
+      return;
+    }
+
+    const wasActive = tabDrag.active;
+    const toIndex = tabItemIndex(tabDrag.item);
+    const drag = releaseTabDrag();
+    if (!wasActive || toIndex < 0) {
+      return;
+    }
+
+    // The pointer moved, so the click that follows must not activate the tab.
+    suppressTabClick = true;
+    if (toIndex !== drag.startIndex) {
+      // Refresh afterwards because Chrome may clamp the index, for example
+      // when pinned tabs occupy the leading positions.
+      performAction({ type: "MOVE_TAB", tabId: drag.tabId, toIndex }, true);
+    }
+  }
+
+  function cancelTabDrag(event) {
+    if (tabDrag === null || (event && event.pointerId !== tabDrag.pointerId)) {
+      return;
+    }
+
+    if (tabDrag.active) {
+      const others = Array.prototype.filter.call(
+        tabItems.children,
+        (element) => element !== tabDrag.item,
+      );
+      tabItems.insertBefore(tabDrag.item, others[tabDrag.startIndex] ?? null);
+      suppressTabClick = true;
+    }
+
+    releaseTabDrag();
   }
 
   async function performAction(message, refreshAfter = false) {
@@ -908,6 +1099,20 @@
   });
   addressInput.addEventListener("focus", () => addressInput.select());
 
+  tabItems.addEventListener(
+    "click",
+    (event) => {
+      if (!suppressTabClick) {
+        return;
+      }
+
+      suppressTabClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    { capture: true },
+  );
+
   tabsScroller.addEventListener(
     "wheel",
     (event) => {
@@ -944,10 +1149,17 @@
   });
 
   shadow.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeBar();
+    if (event.key !== "Escape") {
+      return;
     }
+
+    event.preventDefault();
+    if (tabDrag !== null) {
+      cancelTabDrag();
+      return;
+    }
+
+    closeBar();
   });
 
   chrome.runtime.onMessage.addListener((message) => {

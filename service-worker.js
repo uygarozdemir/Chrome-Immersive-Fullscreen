@@ -312,6 +312,16 @@ async function activateTab(message, sender) {
   return { ok: true };
 }
 
+async function moveTab(message, sender) {
+  const tab = await getTabInSenderWindow(message.tabId, sender);
+  if (!Number.isInteger(message.toIndex) || message.toIndex < 0) {
+    throw new Error("The tab position is invalid.");
+  }
+
+  await chrome.tabs.move(tab.id, { index: message.toIndex });
+  return { ok: true };
+}
+
 async function closeTab(message, sender) {
   const tab = await getTabInSenderWindow(message.tabId, sender);
   await chrome.tabs.remove(tab.id);
@@ -503,6 +513,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
     case "ACTIVATE_TAB":
       operation = activateTab(message, sender);
+      break;
+    case "MOVE_TAB":
+      operation = moveTab(message, sender);
       break;
     case "CLOSE_TAB":
       operation = closeTab(message, sender);
