@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chrome Immersive Fullscreen",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "minimum_chrome_version": "102",
   "description": "Shows tabs, the address bar, and bookmarks while Chrome is in F11 fullscreen.",
   "homepage_url": "https://github.com/uygarozdemir/Chrome-Immersive-Fullscreen",
