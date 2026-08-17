@@ -190,6 +190,41 @@ button {
   outline: none;
 }
 
+.tab-audio {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: default;
+  opacity: 0.85;
+}
+
+.tab-audio:hover,
+.tab-audio:focus-visible {
+  color: #f1f3f4;
+  background: #4f5054;
+  opacity: 1;
+  outline: none;
+}
+
+.tab-audio[data-muted="true"] {
+  color: #f28b82;
+}
+
+.tab-audio-icon {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
 .chrome-button {
   appearance: none;
   display: inline-flex;

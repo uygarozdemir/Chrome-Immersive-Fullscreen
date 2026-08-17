@@ -47,7 +47,7 @@ Use two-space indentation in JavaScript, CSS, and JSON. Preserve strict mode, se
 
 ## Testing
 
-Testing is manual. Verify normal and F11 windows, top-edge activation and hover/focus persistence, tab actions, tab reordering by drag, dotted and local address resolution, search navigation, live tab and bookmark refreshes, window-state restoration, nested folders, overflow-menu keyboard navigation, horizontal scrolling, middle/modifier-click behavior, `Esc`, and HTML/video fullscreen suppression. Test on ordinary `http://` or `https://` pages; Chrome internal pages do not accept content scripts. Document the Chrome version and scenarios checked in pull requests.
+Testing is manual. Verify normal and F11 windows, top-edge activation and hover/focus persistence, tab actions, tab reordering by drag, audio indicator and tab mute toggling, dotted and local address resolution, search navigation, live tab and bookmark refreshes, window-state restoration, nested folders, overflow-menu keyboard navigation, horizontal scrolling, middle/modifier-click behavior, `Esc`, and HTML/video fullscreen suppression. Test on ordinary `http://` or `https://` pages; Chrome internal pages do not accept content scripts. Document the Chrome version and scenarios checked in pull requests.
 
 ## Commits and pull requests
 

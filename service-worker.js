@@ -101,6 +101,8 @@ function sanitizeTab(tab) {
     active: tab.active === true,
     title: String(tab.title ?? "New Tab"),
     url: String(tab.pendingUrl ?? tab.url ?? ""),
+    audible: tab.audible === true,
+    muted: tab.mutedInfo?.muted === true,
   };
 }
 
@@ -328,6 +330,13 @@ async function closeTab(message, sender) {
   return { ok: true };
 }
 
+async function toggleTabMute(message, sender) {
+  const tab = await getTabInSenderWindow(message.tabId, sender);
+  const isMuted = tab.mutedInfo?.muted === true;
+  await chrome.tabs.update(tab.id, { muted: !isMuted });
+  return { ok: true, muted: !isMuted };
+}
+
 async function createTab(sender) {
   const windowId = sender.tab?.windowId;
   if (!Number.isInteger(windowId)) {
@@ -476,7 +485,9 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
   if (
     changeInfo.title === undefined &&
     changeInfo.url === undefined &&
-    changeInfo.favIconUrl === undefined
+    changeInfo.favIconUrl === undefined &&
+    changeInfo.audible === undefined &&
+    changeInfo.mutedInfo === undefined
   ) {
     return;
   }
@@ -519,6 +530,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
     case "CLOSE_TAB":
       operation = closeTab(message, sender);
+      break;
+    case "TOGGLE_TAB_MUTE":
+      operation = toggleTabMute(message, sender);
       break;
     case "CREATE_TAB":
       operation = createTab(sender);

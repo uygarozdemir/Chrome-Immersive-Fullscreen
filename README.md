@@ -8,7 +8,7 @@ The extension is dependency-free, runs entirely inside Chrome, and does not coll
 
 - Activates only when the current Chrome window is in F11 fullscreen.
 - Reveals a three-row Chrome-like interface from a 3-pixel top-edge trigger.
-- Shows tabs with titles and favicons; supports switching, reordering by dragging, closing, middle-click closing, and opening a new tab.
+- Shows tabs with titles, favicons, and audio/mute indicators; supports switching, reordering by dragging, closing, middle-click closing, muting/unmuting, and opening a new tab.
 - Provides Back, Forward, Reload, direct URL navigation, and searches through Chrome's configured default search engine.
 - Displays the Chrome Bookmarks Bar, including nested folders and an overflow menu.
 - Refreshes the open interface when tabs or bookmarks change without interrupting focused controls or menus.
@@ -61,6 +61,7 @@ For troubleshooting and update instructions, see [INSTALLATION.md](INSTALLATION.
 - Move the pointer to the top edge and pause briefly to open the interface.
 - Move away from the interface to hide it.
 - Press `Esc` to close the interface and any open bookmark menus.
+- Click the audio icon on an audible or muted tab to mute or unmute it.
 - Scroll vertically over an overflowing tab or bookmark row to move it horizontally.
 - Drag a tab left or right to reorder it; the strip scrolls when the pointer reaches its edge, and `Esc` cancels the drag.
 - Enter a full URL, dotted hostname, local hostname with a port or path, IP address, or search query in the address field.
