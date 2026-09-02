@@ -59,29 +59,32 @@
   const windowControls = document.createElement("div");
   windowControls.id = "window-controls";
 
-  function createWindowButton(id, title, symbol) {
+  function createActionButton(id, className, title, symbol) {
     const button = document.createElement("button");
     button.type = "button";
     button.id = id;
-    button.className = "window-button";
+    button.className = className;
     button.title = title;
     button.setAttribute("aria-label", title);
     button.textContent = symbol;
     return button;
   }
 
-  const minimizeButton = createWindowButton(
+  const minimizeButton = createActionButton(
     "minimize-button",
+    "window-button",
     "Minimize",
     "—",
   );
-  const restoreButton = createWindowButton(
+  const restoreButton = createActionButton(
     "restore-button",
+    "window-button",
     "Restore previous window size",
     "▢",
   );
-  const closeWindowButton = createWindowButton(
+  const closeWindowButton = createActionButton(
     "close-window-button",
+    "window-button",
     "Close window",
     "×",
   );
@@ -91,20 +94,24 @@
   const navigation = document.createElement("div");
   navigation.id = "navigation";
 
-  function createNavigationButton(id, title, symbol) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.id = id;
-    button.className = "chrome-button navigation-button";
-    button.title = title;
-    button.setAttribute("aria-label", title);
-    button.textContent = symbol;
-    return button;
-  }
-
-  const backButton = createNavigationButton("back-button", "Back", "←");
-  const forwardButton = createNavigationButton("forward-button", "Forward", "→");
-  const reloadButton = createNavigationButton("reload-button", "Reload", "↻");
+  const backButton = createActionButton(
+    "back-button",
+    "chrome-button navigation-button",
+    "Back",
+    "←",
+  );
+  const forwardButton = createActionButton(
+    "forward-button",
+    "chrome-button navigation-button",
+    "Forward",
+    "→",
+  );
+  const reloadButton = createActionButton(
+    "reload-button",
+    "chrome-button navigation-button",
+    "Reload",
+    "↻",
+  );
 
   const addressForm = document.createElement("form");
   addressForm.id = "address-form";
@@ -334,8 +341,13 @@
     clearTimer(hideTimer);
     clearTimer(menuHideTimer);
     clearTimer(dataRefreshTimer);
+    if (overflowUpdateFrame) {
+      window.cancelAnimationFrame(overflowUpdateFrame);
+      overflowUpdateFrame = 0;
+    }
     dataRefreshPending = false;
     closeMenusFrom(0);
+    clearStatus();
     shadow.activeElement?.blur();
     host.dataset.open = "false";
   }
@@ -351,15 +363,19 @@
     status.hidden = true;
   }
 
-  function clearRenderedData() {
-    tabItems.replaceChildren();
-    addressInput.value = "";
+  function resetBookmarkBarState() {
     items.replaceChildren();
     closeMenusFrom(0);
     barEntries = [];
     overflowBookmarks = [];
     overflowButton.hidden = true;
     overflowButton.setAttribute("aria-expanded", "false");
+  }
+
+  function clearRenderedData() {
+    tabItems.replaceChildren();
+    addressInput.value = "";
+    resetBookmarkBarState();
   }
 
   function showDataError(message) {
@@ -863,12 +879,7 @@
 
   function renderBookmarks(bookmarks) {
     clearStatus();
-    items.replaceChildren();
-    closeMenusFrom(0);
-    barEntries = [];
-    overflowBookmarks = [];
-    overflowButton.hidden = true;
-    overflowButton.setAttribute("aria-expanded", "false");
+    resetBookmarkBarState();
 
     if (bookmarks.length === 0) {
       const empty = document.createElement("span");
@@ -1154,6 +1165,7 @@
   async function openBookmark(url, event) {
     event.preventDefault();
     event.stopPropagation();
+    closeMenusFrom(0);
 
     let disposition = "current-tab";
     if ((event.ctrlKey || event.metaKey) && event.shiftKey) {
@@ -1209,6 +1221,7 @@
   reloadButton.addEventListener("click", () => performAction({ type: "RELOAD_TAB" }));
   addressForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    addressInput.blur();
     performAction({ type: "NAVIGATE", input: addressInput.value });
   });
   addressInput.addEventListener("focus", () => addressInput.select());

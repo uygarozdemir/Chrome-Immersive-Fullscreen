@@ -44,9 +44,9 @@ function collectBookmarksBars(nodes, matches) {
   for (const node of nodes ?? []) {
     if (node.folderType === "bookmarks-bar") {
       matches.push(node);
+    } else {
+      collectBookmarksBars(node.children, matches);
     }
-
-    collectBookmarksBars(node.children, matches);
   }
 }
 
