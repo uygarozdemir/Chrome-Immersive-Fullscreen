@@ -78,7 +78,7 @@ button {
 }
 
 #tabs-scroller {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -270,7 +270,7 @@ button {
   display: flex;
   flex: 0 0 auto;
   height: 34px;
-  margin: 0 -7px 0 3px;
+  margin: 0 -7px 0 auto;
 }
 
 .window-button {
