@@ -8,6 +8,7 @@ const ALLOWED_PROTOCOLS = new Set([
   "chrome:",
   "about:",
 ]);
+const NEW_TAB_URL = chrome.runtime.getURL("new-tab.html");
 const LAST_WINDOW_STATE_PREFIX = "last-window-state:";
 const MINIMIZED_FROM_STATE_PREFIX = "minimized-from-state:";
 const RESTORABLE_WINDOW_STATES = new Set(["normal", "maximized", "fullscreen"]);
@@ -342,7 +343,9 @@ async function createTab(sender) {
   if (!Number.isInteger(windowId)) {
     throw new Error("The browser window could not be found.");
   }
-  await chrome.tabs.create({ windowId, active: true });
+  // Chrome's built-in New Tab page does not accept content scripts, so open
+  // the extension's blank page, which loads the interface itself.
+  await chrome.tabs.create({ windowId, url: NEW_TAB_URL, active: true });
   return { ok: true };
 }
 
@@ -436,13 +439,16 @@ chrome.windows.onRemoved.addListener((windowId) => {
 
 async function sendImmersiveRefresh(query) {
   const tabs = await chrome.tabs.query(query);
-  await Promise.allSettled(
-    tabs
-      .filter((tab) => Number.isInteger(tab.id))
-      .map((tab) => chrome.tabs.sendMessage(tab.id, {
-        type: "REFRESH_IMMERSIVE_DATA",
-      })),
-  );
+  const message = { type: "REFRESH_IMMERSIVE_DATA" };
+  const deliveries = tabs
+    .filter((tab) => Number.isInteger(tab.id))
+    .map((tab) => chrome.tabs.sendMessage(tab.id, message));
+  // tabs.sendMessage targets content scripts. The new-tab page is an extension
+  // page, so it also receives the refresh as a runtime message.
+  if (tabs.some((tab) => tab.url === NEW_TAB_URL)) {
+    deliveries.push(chrome.runtime.sendMessage(message));
+  }
+  await Promise.allSettled(deliveries);
 }
 
 function notifyActiveTabInWindow(windowId) {

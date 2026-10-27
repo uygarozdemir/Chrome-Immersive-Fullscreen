@@ -26,6 +26,7 @@ This repository is a dependency-free Chrome Manifest V3 extension. Keep the flat
 - `content.js` builds the three-row Shadow DOM interface and handles tabs, navigation, window controls, pointer and keyboard input, menus, focus preservation, live refreshes, and scrolling.
 - `content.css` contains the isolated Chrome-like surface, tab strip, navigation, bookmark, window-control, and menu styles.
 - `page.css` hides the page scrollbar only while the F11 interface is active so the overlay reaches the physical right edge.
+- `new-tab.html` is the blank page the tab strip's new-tab button opens, because Chrome's built-in New Tab page does not accept content scripts; it loads `content.js` directly.
 - `README.md` explains behavior and limitations; `INSTALLATION.md` contains detailed installation instructions.
 
 There is no generated output, package manager, or automated test directory.

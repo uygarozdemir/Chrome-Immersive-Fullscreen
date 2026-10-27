@@ -84,6 +84,7 @@ manifest.json
 ├── content.js          Shadow DOM interface, interaction logic, menus, and accessibility
 ├── content.css         Isolated interface styling
 ├── page.css            Page-level scrollbar adjustment while the overlay is active
+├── new-tab.html        Blank page opened by the new-tab button; loads the interface directly
 └── icons/              Extension icons
 ```
 
@@ -93,6 +94,7 @@ The content script creates a closed Shadow DOM so the interface is isolated from
 
 - Designed for desktop Google Chrome, primarily on Windows.
 - Does not run on `chrome://` pages, the Chrome Web Store, Chrome's built-in New Tab page, or other protected browser surfaces.
+- The interface's new-tab button opens the extension's blank page instead of Chrome's built-in New Tab page; `Ctrl+T` still opens Chrome's page, where the overlay does not appear.
 - Does not inject into `file://` pages.
 - The overlay is a web-page interface, not Chrome's native browser chrome.
 - Navigating to a protected page removes the overlay until you return to a supported `http://` or `https://` page.

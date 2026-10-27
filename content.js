@@ -14,6 +14,8 @@
   const TAB_DRAG_SWAP_TOLERANCE_PX = 0.5;
   const OVERFLOW_NODE_ID = "__overflow-bookmarks__";
   const PAGE_ACTIVE_ATTRIBUTE = "data-chrome-immersive-fullscreen-active";
+  const NEW_TAB_URL = chrome.runtime.getURL("new-tab.html");
+  const IS_NEW_TAB_PAGE = window.location.href === NEW_TAB_URL;
 
   if (document.getElementById(HOST_ID)) {
     return;
@@ -454,7 +456,7 @@
     tabItems.replaceChildren();
     const fragment = document.createDocumentFragment();
     const activeTab = tabs.find((tab) => tab.active);
-    addressInput.value = activeTab?.url ?? "";
+    addressInput.value = activeTab?.url === NEW_TAB_URL ? "" : activeTab?.url ?? "";
 
     for (const tab of tabs) {
       const item = document.createElement("div");
@@ -469,7 +471,7 @@
       icon.className = "tab-favicon";
       icon.alt = "";
       icon.draggable = false;
-      if (tab.url) {
+      if (tab.url && tab.url !== NEW_TAB_URL) {
         icon.src = faviconUrl(tab.url);
       } else {
         icon.hidden = true;
@@ -1343,5 +1345,22 @@
     { capture: true, passive: true },
   );
 
-  syncFullscreenState();
+  // Like Chrome's New Tab page, open with the interface shown and the address
+  // field focused.
+  async function openNewTabPage() {
+    await syncFullscreenState();
+    if (host.dataset.active !== "true") {
+      return;
+    }
+
+    pointerInUi = true;
+    await openBar();
+    addressInput.focus();
+  }
+
+  if (IS_NEW_TAB_PAGE) {
+    openNewTabPage();
+  } else {
+    syncFullscreenState();
+  }
 })();
